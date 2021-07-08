@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"embed"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"testing"
@@ -86,5 +87,47 @@ func TestMerge(t *testing.T) {
 	}
 	if md5Sum(mustRead(simple, "songs/fs_test.go")) != md5Sum(mustRead(FS, "fs_test.go")) {
 		t.Fatalf("TestMerge(md5 check on fs_test.go): got %q, want %q", md5Sum(mustRead(simple, "songs/fs_test.go")), md5Sum(mustRead(FS, "fs_test.go")))
+	}
+}
+
+func TestSeek(t *testing.T) {
+	f := &file{content: []byte("hello world")}
+
+	_, err := f.Seek(1, io.SeekStart)
+	if err != nil {
+		t.Fatalf("TestSeek(f.Seek(1, io.SeekStart)): got err == %s, want err == nil", err)
+	}
+
+	b, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("TestSeek(on read after SeekStart): got err == %s, want err == nil", err)
+	}
+	if string(b) != "ello world" {
+		t.Fatalf("TestSeek: got string %q, want 'ello world'", string(b))
+	}
+
+	_, err = f.Seek(-2, io.SeekEnd)
+	if err != nil {
+		t.Fatalf("TestSeek(f.Seek(2, io.SeekEnd)): got err == %s, want err == nil", err)
+	}
+	b, err = io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("TestSeek(on read after SeekEnd)): got err == %s, want err == nil", err)
+	}
+	if string(b) != "ld" {
+		t.Fatalf("TestSeek: got string %q, want 'ld'", string(b))
+	}
+	f.Seek(5, io.SeekStart)
+
+	_, err = f.Seek(-2, io.SeekCurrent)
+	if err != nil {
+		t.Fatalf("TestSeek(f.Seek(-2, io.SeekCurrent)): got err == %s, want err == nil", err)
+	}
+	b, err = io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("TestSeek(on read after SeekCurrent)): got err == %s, want err == nil", err)
+	}
+	if string(b) != "lo world" {
+		t.Fatalf("TestSeek: got string %q, want 'lo world'", string(b))
 	}
 }

@@ -3,6 +3,7 @@ package fs
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"sort"
 	"strings"
@@ -193,11 +194,11 @@ func (s *Simple) RO() {
 type file struct {
 	name    string
 	content []byte
+	offset  int64
 	time    time.Time
 	isDir   bool
 
 	objects []fs.DirEntry
-	iter    int
 }
 
 // createDir creates a new *file representing a dir inside this file (which must represent a dir).
@@ -260,33 +261,6 @@ func (f *file) Search(name string) (*file, error) {
 	return nil, fs.ErrNotExist
 }
 
-/*
-func (f *file) ReadDir(n int) ([]fs.DirEntry, error) {
-	//log.Println("f.ReadDir() called")
-	if !f.isDir {
-		return nil, errors.New("not a directory")
-	}
-
-	objs := f.objects[f.iter:]
-
-	if n <= 0 {
-		f.iter = 0
-		return objs, nil
-	}
-	if n > len(objs) {
-		f.iter = 0
-		return objs, io.EOF
-	}
-	if n == len(objs) {
-		f.iter += n
-		return objs, nil
-	}
-	r := objs[:n]
-	f.iter += n
-	return r, nil
-}
-*/
-
 func (f *file) Name() string {
 	return f.name
 }
@@ -313,13 +287,48 @@ func (f *file) Stat() (fs.FileInfo, error) {
 	}, nil
 }
 
+// Read implements io.Reader.
 func (f *file) Read(b []byte) (int, error) {
 	if f.isDir {
 		return 0, fmt.Errorf("cannot Read() a directory")
 	}
-	return copy(b, f.content), nil
+	if len(b) == 0 {
+		return 0, nil
+	}
+	if int(f.offset) >= len(f.content) {
+		return 0, io.EOF
+	}
+	i := copy(b, f.content[f.offset:])
+	f.offset += int64(i)
+	return i, nil
 }
 
+// Seek implement io.Seeker.
+func (f *file) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	case io.SeekStart:
+		if offset < 0 {
+			return 0, fmt.Errorf("can't seek beyond start of file")
+		}
+		f.offset = offset
+		return f.offset, nil
+	case io.SeekCurrent:
+		if f.offset + offset < 0 {
+			return 0, fmt.Errorf("can't seek beyond start of file")
+		}
+		f.offset += offset
+		return f.offset, nil
+	case io.SeekEnd:
+		if len(f.content) + int(offset) < 0 {
+			return 0, fmt.Errorf("can't seek beyond start of file")
+		}
+		f.offset = int64(len(f.content)) + offset
+		return f.offset, nil
+	}
+	return 0, fmt.Errorf("whence value was invalid(%d)", whence)
+}
+
+// Close implememnts io.Closer.
 func (f *file) Close() error {
 	return nil
 }
