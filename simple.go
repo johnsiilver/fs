@@ -62,7 +62,7 @@ func (s *Simple) Open(name string) (fs.File, error) {
 		if i >= len(s.cache) {
 			return nil, fs.ErrNotExist
 		}
-		return s.cache[i], nil
+		return s.cache[i].getCopy(), nil
 	}
 
 	dir := s.root
@@ -73,7 +73,7 @@ func (s *Simple) Open(name string) (fs.File, error) {
 		}
 		dir = f
 	}
-	return dir, nil
+	return dir.getCopy(), nil
 }
 
 func (s *Simple) ReadDir(name string) ([]fs.DirEntry, error) {
@@ -201,6 +201,11 @@ type file struct {
 	objects []fs.DirEntry
 }
 
+func (f *file) getCopy() *file {
+	n := *f
+	return &n
+}
+
 // createDir creates a new *file representing a dir inside this file (which must represent a dir).
 func (f *file) createDir(name string) {
 	if !f.isDir {
@@ -313,13 +318,13 @@ func (f *file) Seek(offset int64, whence int) (int64, error) {
 		f.offset = offset
 		return f.offset, nil
 	case io.SeekCurrent:
-		if f.offset + offset < 0 {
+		if f.offset+offset < 0 {
 			return 0, fmt.Errorf("can't seek beyond start of file")
 		}
 		f.offset += offset
 		return f.offset, nil
 	case io.SeekEnd:
-		if len(f.content) + int(offset) < 0 {
+		if len(f.content)+int(offset) < 0 {
 			return 0, fmt.Errorf("can't seek beyond start of file")
 		}
 		f.offset = int64(len(f.content)) + offset
