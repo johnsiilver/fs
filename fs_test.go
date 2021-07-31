@@ -2,6 +2,7 @@ package fs
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/md5"
 	"embed"
 	"fmt"
@@ -87,6 +88,51 @@ func TestMerge(t *testing.T) {
 	}
 	if md5Sum(mustRead(simple, "songs/fs_test.go")) != md5Sum(mustRead(FS, "fs_test.go")) {
 		t.Fatalf("TestMerge(md5 check on fs_test.go): got %q, want %q", md5Sum(mustRead(simple, "songs/fs_test.go")), md5Sum(mustRead(FS, "fs_test.go")))
+	}
+}
+
+func TestTransform(t *testing.T) {
+	transformer := func(name string, content []byte) ([]byte, error) {
+		var buf bytes.Buffer
+		zw := gzip.NewWriter(&buf)
+		_, err := zw.Write(content)
+		if err != nil {
+			return nil, err
+		}
+		if err := zw.Close(); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+
+	simple := NewSimple()
+	if err := Merge(simple, FS, "", WithTransform(transformer)); err != nil {
+		panic(err)
+	}
+	simple.RO()
+
+	reader, err := simple.Open("fs.go")
+	if err != nil {
+		t.Fatalf("TestTransform: destination did not have fs.go: %s", err)
+	}
+	zr, err := gzip.NewReader(reader)
+	if err != nil {
+		t.Fatalf("TestTranform: unexpected problem reading gzip fs.go: %s", err)
+	}
+	out := bytes.Buffer{}
+	if _, err := io.Copy(&out, zr); err != nil {
+		t.Fatalf("TestTranform: unexpected problem during io.Copy(): %s", err)
+	}
+	if err := zr.Close(); err != nil {
+		t.Fatalf("TestTranform: unexpected problem during gzip close: %s", err)
+	}
+	want, err := FS.ReadFile("fs.go")
+	if err != nil {
+		panic("fs.go not in embedded file system")
+	}
+	got := out.Bytes()
+	if diff := pretty.Compare(string(want), string(got)); diff != "" {
+		t.Fatalf("TestTransform: -want/+got:\n%s", diff)
 	}
 }
 
