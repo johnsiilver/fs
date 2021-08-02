@@ -118,17 +118,51 @@ func (s *Simple) ReadFile(name string) ([]byte, error) {
 	return r.content, nil
 }
 
-// OpenFile implements OpenFiler. Supports flags O_RDONLY only and is simply a call to Open().
-// If you want to write a file, use WriteFile().
+// OpenFile implements OpenFiler. Supports flags O_RDONLY, O_WRONLY, O_CREATE, O_TRUNC and O_EXCL.
+// The file returned by OpenFile is not thread-safe. 
 func (s *Simple) OpenFile(name string, flags int, options ...OFOption) (fs.File, error) {
-	if flags != os.O_RDONLY {
-		return nil, fmt.Errorf("do not support any flags other than O_RDONLY")
+	if isFlagSet(flags, os.O_RDONLY) {
+		return s.Open(name)
 	}
-	return s.Open(name)
+	if s.ro {
+		return nil, fmt.Errorf("in RO mode!")
+	}
+	if !isFlagSet(flags, os.O_WRONLY) {
+		return nil, fmt.Errorf("only support O_RDONLY and O_WRONLY")
+	}
+
+	// The file already exists.
+	if f, err := s.Open(name); err != nil {
+		if isFlagSet(flags, os.O_EXCL) {
+			return nil, fs.ErrExist
+		}
+		if isFlagSet(flags, os.O_TRUNC) {
+			return nil, fmt.Errorf("Simple only supports writing when a file exists if O_TRUNC set")
+		}
+		return &WRFile{f: f.(*file)}, nil
+	}
+
+	if !isFlagSet(flags, os.O_CREATE) {
+		return nil, fs.ErrNotExist
+	}
+
+	if err := s.WriteFile(name, []byte{}, 0660); err != nil {
+		return nil, err
+	}
+
+	f, err := s.Open(name)
+	if err != nil {
+		return nil, fmt.Errorf("bug: we just wrote a file(%s) and then couldn't open it: %s", name, err)
+	}
+	return &WRFile{f: f.(*file)}, nil
+}
+
+func isFlagSet(flags int, flag int) bool {
+        return flags&flag != 0
 }
 
 // WriteFile implememnts Writer. The content reference is copied, so modifying the original will
-// modify it here. perm is ignored.
+// modify it here. perm is ignored. WriteFile is not thread-safe.
 func (s *Simple) WriteFile(name string, content []byte, perm fs.FileMode) error {
 	if s.ro {
 		return fmt.Errorf("Simple is locked from writing")
@@ -199,6 +233,30 @@ func (s *Simple) RO() {
 		)
 		s.cache = sl
 	}
+}
+
+// WRFile provides an io.WriteCloser implementation.
+type WRFile struct {
+	content []byte
+	f *file
+}
+
+func (w *WRFile) Read(b []byte) (n int, err error) {
+	return 0, fmt.Errorf("cannot read from a file in O_WRONLY")
+}
+
+func (w *WRFile) Stat() (fs.FileInfo, error) {
+	return nil, fmt.Errorf("cannot stat a file in O_WRONLY")
+}
+
+func (w *WRFile) Write(b []byte) (n int, err error) {
+	w.content = append(w.content, b...)
+	return len(b), nil
+}
+
+func (w *WRFile) Close() error {
+	w.f.content = w.content
+	return nil
 }
 
 type file struct {
