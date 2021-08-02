@@ -10,13 +10,32 @@ import (
 
 const fileMode fs.FileMode = 0444
 
-// Writer provides a filesystem with simple read and write primitives.
-type Writer interface {
+// OFOption is an option for the OpenFiler.OpenFile() call. The passed "o" arge
+// is implementation dependent.
+type OFOption func(o interface{}) error
+
+// OpenFiler provides a more robust method of opening a file that allows for additional
+// capabilities like writing to files. The fs.File and options are generic and implementation
+// specific. To gain access to additional capabilities usually requires type asserting the fs.File
+// to the implementation specific type.
+type OpenFiler interface {
 	fs.FS
 
-	// Writes file with name (full path) a content to the file system.
-	// Returns fs.ErrExist if the file already exists.
-	WriteFile(name string, content []byte) error
+	// OpenFile opens the file at name with flags and options. flags can be any subset of the
+	// flags defined in the fs module (O_CREATE, O_READONLY, ...). The set of options is implementation
+	// dependent. The fs.File that is returned should be type asserted to gain access to additional
+	// capabilities. If opening for ReadOnly, generally the standard fs.Open() call is better.
+	OpenFile(name string, flags int, options ...OFOption) (fs.File, error)
+}
+
+// Writer provides a filesystem implememnting OpenFiler with a simple way to write and entire file.
+type Writer interface {
+	OpenFiler
+
+	// Writes file with name (full path) a content to the file system. This implementation may
+	// return fs.ErrExist if the file already exists if the FileSystem is write once. The FileMode
+	// may or may not be honored, see the implementation details for more information.
+	WriteFile(name string, data []byte, perm fs.FileMode) error
 }
 
 type mergeOptions struct {
@@ -79,7 +98,7 @@ func Merge(into Writer, from fs.FS, prepend string, options ...MergeOption) erro
 			}
 		}
 
-		return into.WriteFile(path.Join(prepend, p), b)
+		return into.WriteFile(path.Join(prepend, p), b, d.Type())
 	}
 
 	return fs.WalkDir(from, ".", fn)

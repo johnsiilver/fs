@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -117,9 +118,18 @@ func (s *Simple) ReadFile(name string) ([]byte, error) {
 	return r.content, nil
 }
 
+// OpenFile implements OpenFiler. Supports flags O_RDONLY only and is simply a call to Open().
+// If you want to write a file, use WriteFile().
+func (s *Simple) OpenFile(name string, flags int, options ...OFOption) (fs.File, error) {
+	if flags != os.O_RDONLY {
+		return nil, fmt.Errorf("do not support any flags other than O_RDONLY")
+	}
+	return s.Open(name)
+}
+
 // WriteFile implememnts Writer. The content reference is copied, so modifying the original will
-// modify it here.
-func (s *Simple) WriteFile(name string, content []byte) error {
+// modify it here. perm is ignored.
+func (s *Simple) WriteFile(name string, content []byte, perm fs.FileMode) error {
 	if s.ro {
 		return fmt.Errorf("Simple is locked from writing")
 	}

@@ -37,14 +37,14 @@ func md5Sum(b []byte) string {
 
 func TestMerge(t *testing.T) {
 	simple := NewSimple(WithPearson())
-	simple.WriteFile("/where/the/streets/have/no/name/u2.txt", []byte("joshua tree"))
+	simple.WriteFile("/where/the/streets/have/no/name/u2.txt", []byte("joshua tree"), 0660)
 
 	if err := Merge(simple, FS, "/songs/"); err != nil {
 		panic(err)
 	}
 	simple.RO()
 
-	if err := simple.WriteFile("/some/file", []byte("who cares")); err == nil {
+	if err := simple.WriteFile("/some/file", []byte("who cares"), 0660); err == nil {
 		t.Fatalf("TestMerge(write after .RO()): should not be able to write, but did")
 	}
 
