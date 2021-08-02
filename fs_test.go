@@ -136,6 +136,29 @@ func TestTransform(t *testing.T) {
 	}
 }
 
+func TestStat(t *testing.T) {
+	systems := []*Simple{}
+
+	simple := NewSimple()
+	simple.WriteFile("/some/dir/file.txt", []byte("joshua tree"), 0660)
+	systems = append(systems, simple)
+
+	simple = NewSimple(WithPearson())
+	simple.WriteFile("/some/dir/file.txt", []byte("joshua tree"), 0660)
+	simple.RO()
+	systems = append(systems, simple)
+
+	for _, system := range systems {
+		stat, err := system.Stat("/some/dir")
+		if err != nil {
+			t.Fatalf("TestStat: could not Stat the dir: %s", err)
+		}
+		if !stat.IsDir() {
+			t.Fatalf("TestStat: dir did not show as IsDir()")
+		}
+	}
+}
+
 func TestSeek(t *testing.T) {
 	f := &file{content: []byte("hello world")}
 

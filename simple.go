@@ -78,9 +78,17 @@ func (s *Simple) Open(name string) (fs.File, error) {
 }
 
 func (s *Simple) ReadDir(name string) ([]fs.DirEntry, error) {
+	dir, err := s.findDir(name)
+	if err != nil {
+		return nil, err
+	}
+	return dir.objects, nil
+}
+
+func (s *Simple) findDir(name string) (*file, error) {
 	switch name {
 	case ".", "", "/":
-		return s.root.objects, nil
+		return s.root, nil
 	}
 	name = strings.TrimPrefix(name, ".")
 	name = strings.TrimPrefix(name, "/")
@@ -99,8 +107,11 @@ func (s *Simple) ReadDir(name string) ([]fs.DirEntry, error) {
 		}
 		dir = f
 	}
+	if !dir.isDir {
+		return nil, fmt.Errorf("path(%s) is not a directory", name)
+	}
 
-	return dir.objects, nil
+	return dir, nil
 }
 
 // ReadFile implememnts ReadFileFS.ReadFile(). The slice returned by ReadFile is not
@@ -118,8 +129,21 @@ func (s *Simple) ReadFile(name string) ([]byte, error) {
 	return r.content, nil
 }
 
+// Stat implements fs.StatFS.Stat().
+func (s *Simple) Stat(name string) (fs.FileInfo, error) {
+	f, err := s.Open(name)
+	if err == nil {
+		return f.Stat()
+	}
+	d, err := s.findDir(name)
+	if err != nil {
+		return nil, fs.ErrNotExist
+	}
+	return d.Info()
+}
+
 // OpenFile implements OpenFiler. Supports flags O_RDONLY, O_WRONLY, O_CREATE, O_TRUNC and O_EXCL.
-// The file returned by OpenFile is not thread-safe. 
+// The file returned by OpenFile is not thread-safe.
 func (s *Simple) OpenFile(name string, flags int, options ...OFOption) (fs.File, error) {
 	if isFlagSet(flags, os.O_RDONLY) {
 		return s.Open(name)
@@ -133,6 +157,13 @@ func (s *Simple) OpenFile(name string, flags int, options ...OFOption) (fs.File,
 
 	// The file already exists.
 	if f, err := s.Open(name); err != nil {
+		fi, err := f.Stat()
+		if err != nil {
+			return nil, fmt.Errorf("file exists but could not Stat(): %w", err)
+		}
+		if fi.IsDir() {
+			return nil, fmt.Errorf("cannot write to a directory")
+		}
 		if isFlagSet(flags, os.O_EXCL) {
 			return nil, fs.ErrExist
 		}
@@ -158,7 +189,7 @@ func (s *Simple) OpenFile(name string, flags int, options ...OFOption) (fs.File,
 }
 
 func isFlagSet(flags int, flag int) bool {
-        return flags&flag != 0
+	return flags&flag != 0
 }
 
 // WriteFile implememnts Writer. The content reference is copied, so modifying the original will
@@ -238,7 +269,7 @@ func (s *Simple) RO() {
 // WRFile provides an io.WriteCloser implementation.
 type WRFile struct {
 	content []byte
-	f *file
+	f       *file
 }
 
 func (w *WRFile) Read(b []byte) (n int, err error) {
