@@ -81,6 +81,23 @@ func (f *FS) ReadFile(name string) ([]byte, error) {
 	return os.ReadFile(name)
 }
 
+// WriteFile implements jsfs.Writer.WriteFile(). If the file exists this will
+// attempt to write over it.
+func (f *FS) WriteFile(name string, content []byte, perm fs.FileMode) error {
+	file, err := f.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, FileMode(perm))
+	if err != nil {
+		return err
+	}
+
+	filer := file.(*File)
+	_, err = filer.Write(content)
+	if err != nil {
+		return err
+	}
+
+	return filer.Close()
+}
+
 // Glob implements fs.GlobFS.Glob().
 func (f *FS) Glob(pattern string) (matches []string, err error) {
 	return filepath.Glob(pattern)

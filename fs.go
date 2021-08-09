@@ -33,7 +33,7 @@ type Writer interface {
 	OpenFiler
 
 	// Writes file with name (full path) a content to the file system. This implementation may
-	// return fs.ErrExist if the file already exists if the FileSystem is write once. The FileMode
+	// return fs.ErrExist if the file already exists and the FileSystem is write once. The FileMode
 	// may or may not be honored, see the implementation details for more information.
 	WriteFile(name string, data []byte, perm fs.FileMode) error
 }
@@ -102,4 +102,10 @@ func Merge(into Writer, from fs.FS, prepend string, options ...MergeOption) erro
 	}
 
 	return fs.WalkDir(from, ".", fn)
+}
+
+// Logger provides the minimum interface for a logging client.
+type Logger interface {
+	Println(v ...interface{})
+	Printf(format string, v ...interface{})
 }
