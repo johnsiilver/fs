@@ -4,6 +4,7 @@ package fs
 import (
 	"fmt"
 	"io/fs"
+	"log"
 	"path"
 	"strings"
 )
@@ -74,8 +75,8 @@ func Merge(into Writer, from fs.FS, prepend string, options ...MergeOption) erro
 		if !strings.HasSuffix(prepend, "/") {
 			return fmt.Errorf("prepend(%s) does not end with '/'", prepend)
 		}
-		strings.TrimPrefix(prepend, ".")
-		strings.TrimPrefix(prepend, "/")
+		prepend = strings.TrimPrefix(prepend, ".")
+		prepend = strings.TrimPrefix(prepend, "/")
 	}
 
 	fn := func(p string, d fs.DirEntry, err error) error {
@@ -108,4 +109,16 @@ func Merge(into Writer, from fs.FS, prepend string, options ...MergeOption) erro
 type Logger interface {
 	Println(v ...interface{})
 	Printf(format string, v ...interface{})
+}
+
+// DefaultLogger provides a default Logger implementation that uses Go's standard
+// log.Println/Printf calls.
+type DefaultLogger struct{}
+
+func (DefaultLogger) Println(v ...interface{}) {
+	log.Println(v...)
+}
+
+func (DefaultLogger) Printf(format string, v ...interface{}) {
+	log.Printf(format, v...)
 }

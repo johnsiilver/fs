@@ -91,6 +91,13 @@ type CacheFS interface {
 	fs.StatFS
 }
 
+// SetFiller provides a function for setting a jsfs.Writer implementaiton that
+// does cache fills on misses. Some CacheFS implementation need this because they
+// support automatic cache fill mechanisms instead of just Getter()/Setter() methods.
+type SetFiller interface {
+	SetFiller(fsys CacheFS)
+}
+
 // FS implemenents io/fs.FS to provide a cache reader and writer.
 type FS struct {
 	cache, store CacheFS
@@ -100,6 +107,10 @@ type FS struct {
 
 // New is the constructor for FS.
 func New(cache CacheFS, store CacheFS) (*FS, error) {
+	if v, ok := cache.(SetFiller); ok {
+		v.SetFiller(store)
+	}
+
 	return &FS{
 		cache: cache,
 		store: store,
