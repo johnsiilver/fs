@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"regexp"
 	"sync"
@@ -126,7 +127,7 @@ func (f *FS) OpenFile(name string, flags int, options ...jsfs.OFOption) (fs.File
 		if isFlagSet(flags, os.O_EXCL) {
 			return nil, fs.ErrExist
 		}
-		if isFlagSet(flags, os.O_TRUNC) {
+		if !isFlagSet(flags, os.O_TRUNC) {
 			return nil, fmt.Errorf("did not receive O_TRUNC when file exists. Redis only supports truncation")
 		}
 	} else {
@@ -148,6 +149,15 @@ func (f *FS) OpenFile(name string, flags int, options ...jsfs.OFOption) (fs.File
 		ttl:     opts.expireFiles,
 		client:  f.client,
 	}, nil
+}
+
+// Remove attempts to remove file at name from FS.
+func (f *FS) Remove(name string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	result := f.client.Del(ctx, name)
+	return result.Err()
 }
 
 func (f *FS) exists(name string) (bool, error) {
@@ -217,6 +227,7 @@ func (f *FS) WriteFile(name string, content []byte, perm fs.FileMode) error {
 		}
 	}
 
+	log.Println("here")
 	file, err := f.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, opts...)
 	if err != nil {
 		return err
