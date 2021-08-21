@@ -37,11 +37,11 @@ func (f *File) Stat() (fs.FileInfo, error) {
 }
 
 func (f *File) Write(b []byte) (n int, err error) {
-	return f.Write(b)
+	return f.file.Write(b)
 }
 
 func (f *File) Close() error {
-	return f.Close()
+	return f.file.Close()
 }
 
 type fileInfo struct {
@@ -124,7 +124,9 @@ func FileMode(mode fs.FileMode) jsfs.OFOption {
 func (f *FS) OpenFile(name string, flags int, options ...jsfs.OFOption) (fs.File, error) {
 	opts := &ofOptions{}
 	for _, o := range options {
-		o(&opts)
+		if err := o(opts); err != nil {
+			return nil, err
+		}
 	}
 	file, err := os.OpenFile(name, flags, opts.mode)
 	if err != nil {

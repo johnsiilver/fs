@@ -1,4 +1,4 @@
-package fs
+package simple
 
 import (
 	"errors"
@@ -10,15 +10,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	jsfs "github.com/johnsiilver/fs"
 )
 
-// Simple provides a simple memory structure that implements io/fs.FS and fs.Writer(above).
+// Memfs provides a simple memory structure that implements io/fs.FS and fs.Writer(above).
 // This is great for aggregating several different embeded fs.FS into a single structure using
 // Merge() below. It uses "/" unix separators and doesn't deal with any funky "\/" things.
 // If you want to use this don't start trying to get complicated with your pathing.
 // This structure is safe for concurrent reading or concurrent writing, but not concurrent
 // read/write. Once finished writing files, you should call .RO() to lock it.
-type Simple struct {
+type Memfs struct {
 	root *file
 
 	writeMu sync.Mutex
@@ -30,30 +32,30 @@ type Simple struct {
 }
 
 // SimpleOption provides an optional argument to NewSimple().
-type SimpleOption func(s *Simple)
+type SimpleOption func(s *Memfs)
 
 // WithPearson will create a lookup cache using Pearson hashing to make lookups actually happen
 // at O(1) (after the hash calc) instead of walking the file system tree after various strings
 // splits. When using this, realize that you MUST be using ASCII characters.
 func WithPearson() SimpleOption {
-	return func(s *Simple) {
+	return func(s *Memfs) {
 		s.pearson = true
 	}
 }
 
-// NewSimple is the constructor for Simple.
-func NewSimple(options ...SimpleOption) *Simple {
-	return &Simple{root: &file{name: ".", time: time.Now(), isDir: true}}
+// New is the constructor for Simple.
+func New(options ...SimpleOption) *Memfs {
+	return &Memfs{root: &file{name: ".", time: time.Now(), isDir: true}}
 }
 
 // Open implements fs.FS.Open().
-func (s *Simple) Open(name string) (fs.File, error) {
+func (s *Memfs) Open(name string) (fs.File, error) {
 	if name == "/" || name == "" || name == "." {
 		return s.root, nil
 	}
 
-	strings.TrimPrefix(name, ".")
-	strings.TrimPrefix(name, "/")
+	name = strings.TrimPrefix(name, ".")
+	name = strings.TrimPrefix(name, "/")
 
 	sp := strings.Split(name, "/")
 
@@ -77,7 +79,7 @@ func (s *Simple) Open(name string) (fs.File, error) {
 	return dir.getCopy(), nil
 }
 
-func (s *Simple) ReadDir(name string) ([]fs.DirEntry, error) {
+func (s *Memfs) ReadDir(name string) ([]fs.DirEntry, error) {
 	dir, err := s.findDir(name)
 	if err != nil {
 		return nil, err
@@ -85,7 +87,7 @@ func (s *Simple) ReadDir(name string) ([]fs.DirEntry, error) {
 	return dir.objects, nil
 }
 
-func (s *Simple) findDir(name string) (*file, error) {
+func (s *Memfs) findDir(name string) (*file, error) {
 	switch name {
 	case ".", "", "/":
 		return s.root, nil
@@ -117,7 +119,7 @@ func (s *Simple) findDir(name string) (*file, error) {
 // ReadFile implememnts ReadFileFS.ReadFile(). The slice returned by ReadFile is not
 // a copy of the file's contents like Open().File.Read() returns. Modifying it will
 // modifiy the content so BE CAREFUL.
-func (s *Simple) ReadFile(name string) ([]byte, error) {
+func (s *Memfs) ReadFile(name string) ([]byte, error) {
 	f, err := s.Open(name)
 	if err != nil {
 		return nil, err
@@ -130,7 +132,7 @@ func (s *Simple) ReadFile(name string) ([]byte, error) {
 }
 
 // Stat implements fs.StatFS.Stat().
-func (s *Simple) Stat(name string) (fs.FileInfo, error) {
+func (s *Memfs) Stat(name string) (fs.FileInfo, error) {
 	f, err := s.Open(name)
 	if err == nil {
 		return f.Stat()
@@ -144,12 +146,12 @@ func (s *Simple) Stat(name string) (fs.FileInfo, error) {
 
 // OpenFile implements OpenFiler. Supports flags O_RDONLY, O_WRONLY, O_CREATE, O_TRUNC and O_EXCL.
 // The file returned by OpenFile is not thread-safe.
-func (s *Simple) OpenFile(name string, flags int, options ...OFOption) (fs.File, error) {
+func (s *Memfs) OpenFile(name string, flags int, options ...jsfs.OFOption) (fs.File, error) {
 	if isFlagSet(flags, os.O_RDONLY) {
 		return s.Open(name)
 	}
 	if s.ro {
-		return nil, fmt.Errorf("in RO mode!")
+		return nil, fmt.Errorf("in RO mode")
 	}
 	if !isFlagSet(flags, os.O_WRONLY) {
 		return nil, fmt.Errorf("only support O_RDONLY and O_WRONLY")
@@ -194,7 +196,7 @@ func isFlagSet(flags int, flag int) bool {
 
 // WriteFile implememnts Writer. The content reference is copied, so modifying the original will
 // modify it here. perm is ignored. WriteFile is not thread-safe.
-func (s *Simple) WriteFile(name string, content []byte, perm fs.FileMode) error {
+func (s *Memfs) WriteFile(name string, content []byte, perm fs.FileMode) error {
 	if s.ro {
 		return fmt.Errorf("Simple is locked from writing")
 	}
@@ -243,7 +245,7 @@ func (s *Simple) WriteFile(name string, content []byte, perm fs.FileMode) error 
 }
 
 // RO locks the file system from writing.
-func (s *Simple) RO() {
+func (s *Memfs) RO() {
 	s.ro = true
 
 	if s.pearson {
@@ -318,17 +320,6 @@ func (f *file) createDir(name string) {
 			return f.objects[i].Name() < f.objects[j].Name()
 		},
 	)
-	s := []string{}
-	for _, o := range f.objects {
-		s = append(s, o.Name())
-	}
-
-	s = nil
-	for _, o := range n.objects {
-		s = append(s, o.Name())
-	}
-
-	return
 }
 
 func (f *file) addFile(nf *file) {
@@ -372,6 +363,8 @@ func (f *file) Name() string {
 func (f *file) IsDir() bool {
 	return f.isDir
 }
+
+const fileMode fs.FileMode = 0444
 
 func (f *file) Type() fs.FileMode {
 	return fileMode

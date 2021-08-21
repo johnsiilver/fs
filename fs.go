@@ -9,8 +9,6 @@ import (
 	"strings"
 )
 
-const fileMode fs.FileMode = 0444
-
 // OFOption is an option for the OpenFiler.OpenFile() call. The passed "o" arge
 // is implementation dependent.
 type OFOption func(o interface{}) error
@@ -63,6 +61,7 @@ func WithTransform(ft FileTransform) MergeOption {
 // implement Writer, this will panic. If the file already exists, this will error and
 // leave a partial copied fs.FS.
 func Merge(into Writer, from fs.FS, prepend string, options ...MergeOption) error {
+	// Note: Testing this is done inside simple_test.go, to avoid some recursive imports
 	opt := mergeOptions{}
 	for _, o := range options {
 		o(&opt)

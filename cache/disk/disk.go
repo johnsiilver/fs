@@ -9,29 +9,19 @@ import (
 	"io"
 	"io/fs"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"regexp"
-	"sync"
+	"strings"
 	"time"
 
 	jsfs "github.com/johnsiilver/fs"
 	"github.com/johnsiilver/fs/cache"
 	osfs "github.com/johnsiilver/fs/os"
-	"github.com/petar/GoLLRB/llrb"
 )
 
 var _ cache.CacheFS = &FS{}
-
-type expireKey struct {
-	time.Time
-
-	name string
-}
-
-func (e expireKey) Less(than llrb.Item) bool {
-	return than.(expireKey).Before(e.Time)
-}
 
 // FS provides a disk cache based on the johnsiilver/fs/os package. FS must have
 // Close() called to stop internal goroutines.
@@ -41,11 +31,9 @@ type FS struct {
 	location       string
 	openTimeout    time.Duration
 	expireDuration time.Duration
+	index          *index
 
 	writeFileOFOptions []writeFileOptions
-
-	mu      sync.Mutex
-	expires *llrb.LLRB
 
 	closeCh   chan struct{}
 	checkTime time.Duration
@@ -53,6 +41,21 @@ type FS struct {
 
 // Option is an optional argument for the New() constructor.
 type Option func(f *FS) error
+
+// WithExpireCheck changes at what interval we check for file expiration.
+func WithExpireCheck(d time.Duration) Option {
+	return func(f *FS) error {
+		f.checkTime = d
+		return nil
+	}
+}
+
+func WithExpireFiles(d time.Duration) Option {
+	return func(f *FS) error {
+		f.expireDuration = d
+		return nil
+	}
+}
 
 type writeFileOptions struct {
 	regex   *regexp.Regexp
@@ -95,10 +98,9 @@ func New(location string, options ...Option) (*FS, error) {
 
 	sys := &FS{
 		location:       location,
+		expireDuration: 30 * time.Minute,
 		fs:             fs,
 		openTimeout:    3 * time.Second,
-		expires:        llrb.New(),
-		expireDuration: 30 * time.Minute,
 		checkTime:      1 * time.Minute,
 	}
 
@@ -107,6 +109,8 @@ func New(location string, options ...Option) (*FS, error) {
 			return nil, err
 		}
 	}
+
+	sys.index = newIndex(location, sys.expireDuration)
 
 	go sys.expireLoop()
 
@@ -124,25 +128,20 @@ func (f *FS) Location() string {
 
 // Open implements fs.FS.Open(). fs.File is an *johnsiilver/fs/os/File.
 func (f *FS) Open(name string) (fs.File, error) {
-	file, err := f.fs.Open(path.Join(f.location, name))
+	file, err := f.OpenFile(name, os.O_RDONLY)
 	if err != nil {
 		return nil, err
 	}
-
-	f.mu.Lock()
-	f.expires.ReplaceOrInsert(expireKey{Time: time.Now(), name: name})
-	f.mu.Unlock()
 
 	return file, nil
 }
 
 type ofOptions struct {
-	mode        fs.FileMode
-	expireFiles time.Duration
+	mode fs.FileMode
 }
 
 func (o *ofOptions) defaults() {
-	o.expireFiles = 30 * time.Minute
+	o.mode = 0644
 }
 
 func (o ofOptions) toOsOFOptions() []jsfs.OFOption {
@@ -151,18 +150,6 @@ func (o ofOptions) toOsOFOptions() []jsfs.OFOption {
 		options = append(options, osfs.FileMode(o.mode))
 	}
 	return options
-}
-
-// ExpireFiles expires files at duration d. If not set for a file, redis.KeepTTL is used.
-func ExpireFiles(d time.Duration) jsfs.OFOption {
-	return func(o interface{}) error {
-		opts, ok := o.(*ofOptions)
-		if !ok {
-			return fmt.Errorf("bug: redis.ofOptions was not passed(%T)", o)
-		}
-		opts.expireFiles = d
-		return nil
-	}
 }
 
 // FileMode sets the fs.FileMode when opening a file with OpenFile().
@@ -181,65 +168,66 @@ func FileMode(mode fs.FileMode) jsfs.OFOption {
 // and os.O_TRUNC. If OpenFile is passed O_RDONLY, this calls Open() and ignores all options.
 // When writing a file, the file is not written until Close() is called on the file.
 func (f *FS) OpenFile(name string, flags int, options ...jsfs.OFOption) (fs.File, error) {
-	opts := ofOptions{}
+	name = strings.Replace(name, "/", "_slash_", -1)
+	opts := &ofOptions{}
 	opts.defaults()
 
 	for _, o := range options {
-		o(&opts)
+		if err := o(opts); err != nil {
+			return nil, err
+		}
 	}
 
+	log.Printf("OpenFile sees(%v): %s", opts.mode, path.Join(f.location, name))
 	file, err := f.fs.OpenFile(path.Join(f.location, name), flags, opts.toOsOFOptions()...)
 	if err != nil {
 		return nil, err
 	}
 
-	f.mu.Lock()
-	f.expires.ReplaceOrInsert(expireKey{Time: time.Now(), name: name})
-	f.mu.Unlock()
+	f.index.addOrUpdate(name)
 
 	return file, nil
 }
 
 // ReadFile implements fs.ReadFileFS.ReadFile().
 func (f *FS) ReadFile(name string) ([]byte, error) {
-	file, err := f.Open(path.Join(f.location, name))
+	file, err := f.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	r := file.(*osfs.File)
 
-	f.mu.Lock()
-	f.expires.ReplaceOrInsert(expireKey{Time: time.Now(), name: name})
-	f.mu.Unlock()
-
-	return io.ReadAll(r)
+	return io.ReadAll(file)
 }
 
 func (f *FS) Stat(name string) (fs.FileInfo, error) {
+	name = strings.Replace(name, "/", "_slash_", -1)
 	return f.fs.Stat(path.Join(f.location, name))
 }
 
 func (f *FS) WriteFile(name string, content []byte, perm fs.FileMode) error {
-	name = path.Join(f.location, name)
-	var opts = []jsfs.OFOption{
-		osfs.FileMode(perm),
-	}
+	opts := []jsfs.OFOption{}
 
 	for _, wfo := range f.writeFileOFOptions {
 		if wfo.regex == nil {
-			opts = wfo.options
+			for _, o := range wfo.options {
+				opts = append(opts, o)
+			}
 			break
 		}
 		if wfo.regex.MatchString(name) {
-			opts = wfo.options
+			for _, o := range wfo.options {
+				opts = append(opts, o)
+			}
 			break
 		}
 	}
 
-	file, err := f.fs.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, opts...)
+	log.Println("writeFile sees: ", name)
+	file, err := f.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, opts...)
 	if err != nil {
 		return err
 	}
+	log.Println("get here")
 
 	rFile := file.(*osfs.File)
 	_, err = rFile.Write(content)
@@ -247,9 +235,7 @@ func (f *FS) WriteFile(name string, content []byte, perm fs.FileMode) error {
 		return err
 	}
 
-	f.mu.Lock()
-	f.expires.ReplaceOrInsert(expireKey{Time: time.Now(), name: name})
-	f.mu.Unlock()
+	f.index.addOrUpdate(name)
 
 	return err
 }
@@ -258,19 +244,9 @@ func (f *FS) expireLoop() {
 	for {
 		select {
 		case <-f.closeCh:
+			return
 		case <-time.After(f.checkTime):
+			f.index.deleteOld()
 		}
-		f.mu.Lock()
-		f.expires.AscendLessThan(
-			expireKey{Time: time.Now().Add(-f.expireDuration)},
-			f.expireItem,
-		)
-		f.mu.Lock()
 	}
-}
-
-func (f *FS) expireItem(item llrb.Item) bool {
-	ek := item.(expireKey)
-	f.expires.Delete(ek)
-	return true
 }

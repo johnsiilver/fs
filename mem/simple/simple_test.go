@@ -1,4 +1,4 @@
-package fs
+package simple
 
 import (
 	"bytes"
@@ -11,15 +11,12 @@ import (
 	"log"
 	"testing"
 
+	jsfs "github.com/johnsiilver/fs"
 	"github.com/kylelemons/godebug/pretty"
 )
 
-//go:embed fs.go fs_test.go go.mod
+//go:embed simple.go pearson.go
 var FS embed.FS
-
-var (
-	fsmd5, fstestmd5 string
-)
 
 func mustRead(fsys fs.FS, name string) []byte {
 	b, err := fs.ReadFile(fsys, name)
@@ -31,20 +28,20 @@ func mustRead(fsys fs.FS, name string) []byte {
 
 func md5Sum(b []byte) string {
 	h := md5.New()
-	h.Write(mustRead(FS, "fs.go"))
+	h.Write(mustRead(FS, "simple.go"))
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 func TestMerge(t *testing.T) {
-	simple := NewSimple(WithPearson())
-	simple.WriteFile("/where/the/streets/have/no/name/u2.txt", []byte("joshua tree"), 0660)
+	mem := New(WithPearson())
+	mem.WriteFile("/where/the/streets/have/no/name/u2.txt", []byte("joshua tree"), 0660)
 
-	if err := Merge(simple, FS, "/songs/"); err != nil {
+	if err := jsfs.Merge(mem, FS, "/songs/"); err != nil {
 		panic(err)
 	}
-	simple.RO()
+	mem.RO()
 
-	if err := simple.WriteFile("/some/file", []byte("who cares"), 0660); err == nil {
+	if err := mem.WriteFile("/some/file", []byte("who cares"), 0660); err == nil {
 		t.Fatalf("TestMerge(write after .RO()): should not be able to write, but did")
 	}
 
@@ -59,7 +56,7 @@ func TestMerge(t *testing.T) {
 	}
 
 	for _, p := range pathsToCheck {
-		fi, err := fs.Stat(simple, p)
+		fi, err := fs.Stat(mem, p)
 		if err != nil {
 			t.Fatalf("TestMerge(stat dir): (%s) err: %s", p, err)
 		}
@@ -68,14 +65,14 @@ func TestMerge(t *testing.T) {
 		}
 	}
 
-	fs.WalkDir(simple, ".",
+	fs.WalkDir(mem, ".",
 		func(path string, d fs.DirEntry, err error) error {
 			log.Println("simple walk: ", path)
 			return nil
 		},
 	)
 
-	b, err := simple.ReadFile("where/the/streets/have/no/name/u2.txt")
+	b, err := mem.ReadFile("where/the/streets/have/no/name/u2.txt")
 	if err != nil {
 		t.Fatalf("TestMerge(simple.ReadFile): expected file gave error: %s", err)
 	}
@@ -83,11 +80,11 @@ func TestMerge(t *testing.T) {
 		t.Fatalf("TestMerge(simple.ReadFile): -want/+got:\n%s", pretty.Compare("joshua tree", string(b)))
 	}
 
-	if md5Sum(mustRead(simple, "songs/fs.go")) != md5Sum(mustRead(FS, "fs.go")) {
-		t.Fatalf("TestMerge(md5 check on fs.go): got %q, want %q", md5Sum(mustRead(simple, "songs/fs.go")), md5Sum(mustRead(FS, "fs.go")))
+	if md5Sum(mustRead(mem, "songs/simple.go")) != md5Sum(mustRead(FS, "simple.go")) {
+		t.Fatalf("TestMerge(md5 check on simple.go): got %q, want %q", md5Sum(mustRead(mem, "songs/simple.go")), md5Sum(mustRead(FS, "simple.go")))
 	}
-	if md5Sum(mustRead(simple, "songs/fs_test.go")) != md5Sum(mustRead(FS, "fs_test.go")) {
-		t.Fatalf("TestMerge(md5 check on fs_test.go): got %q, want %q", md5Sum(mustRead(simple, "songs/fs_test.go")), md5Sum(mustRead(FS, "fs_test.go")))
+	if md5Sum(mustRead(mem, "songs/pearson.go")) != md5Sum(mustRead(FS, "pearson.go")) {
+		t.Fatalf("TestMerge(md5 check on pearson.go): got %q, want %q", md5Sum(mustRead(mem, "songs/pearson.go")), md5Sum(mustRead(FS, "pearson.go")))
 	}
 }
 
@@ -105,19 +102,19 @@ func TestTransform(t *testing.T) {
 		return buf.Bytes(), nil
 	}
 
-	simple := NewSimple()
-	if err := Merge(simple, FS, "", WithTransform(transformer)); err != nil {
+	mem := New()
+	if err := jsfs.Merge(mem, FS, "", jsfs.WithTransform(transformer)); err != nil {
 		panic(err)
 	}
-	simple.RO()
+	mem.RO()
 
-	reader, err := simple.Open("fs.go")
+	reader, err := mem.Open("simple.go")
 	if err != nil {
-		t.Fatalf("TestTransform: destination did not have fs.go: %s", err)
+		t.Fatalf("TestTransform: destination did not have simple.go: %s", err)
 	}
 	zr, err := gzip.NewReader(reader)
 	if err != nil {
-		t.Fatalf("TestTranform: unexpected problem reading gzip fs.go: %s", err)
+		t.Fatalf("TestTranform: unexpected problem reading gzip simple.go: %s", err)
 	}
 	out := bytes.Buffer{}
 	if _, err := io.Copy(&out, zr); err != nil {
@@ -126,9 +123,9 @@ func TestTransform(t *testing.T) {
 	if err := zr.Close(); err != nil {
 		t.Fatalf("TestTranform: unexpected problem during gzip close: %s", err)
 	}
-	want, err := FS.ReadFile("fs.go")
+	want, err := FS.ReadFile("simple.go")
 	if err != nil {
-		panic("fs.go not in embedded file system")
+		panic("simple.go not in embedded file system")
 	}
 	got := out.Bytes()
 	if diff := pretty.Compare(string(want), string(got)); diff != "" {
@@ -137,16 +134,16 @@ func TestTransform(t *testing.T) {
 }
 
 func TestStat(t *testing.T) {
-	systems := []*Simple{}
+	systems := []*Memfs{}
 
-	simple := NewSimple()
-	simple.WriteFile("/some/dir/file.txt", []byte("joshua tree"), 0660)
-	systems = append(systems, simple)
+	mem := New()
+	mem.WriteFile("/some/dir/file.txt", []byte("joshua tree"), 0660)
+	systems = append(systems, mem)
 
-	simple = NewSimple(WithPearson())
-	simple.WriteFile("/some/dir/file.txt", []byte("joshua tree"), 0660)
-	simple.RO()
-	systems = append(systems, simple)
+	mem = New(WithPearson())
+	mem.WriteFile("/some/dir/file.txt", []byte("joshua tree"), 0660)
+	mem.RO()
+	systems = append(systems, mem)
 
 	for _, system := range systems {
 		stat, err := system.Stat("/some/dir")

@@ -1,4 +1,4 @@
-package fs
+package simple
 
 /*
 Borrowed with modifications from: https://gist.github.com/twinbird/a9eeb88a725a3ba98239d92ec42b2ec9
